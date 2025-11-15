@@ -2,7 +2,6 @@ import multiprocessing
 import os
 from datetime import timedelta
 from functools import partial
-from pathlib import Path
 
 import pandas as pd
 import pyarrow as pa
