@@ -144,18 +144,36 @@ class AISDataPreprocessor:
         print("--- All preprocessing jobs complete! ---")
 
     def process_local_csv(self, local_csv_path):
+        """Public method to process one or more local CSV files.
+
+        ``local_csv_path`` may point to a single CSV file or a directory that
+        contains multiple CSV files downloaded from the AIS Danish archive. All
+        discovered files are processed sequentially and appended to the Parquet
+        dataset under ``self.out_path``.
         """
-        Public method to process a single local CSV file.
-        """
-        print(f"--- Starting Local CSV Preprocessing ---")
-        if not os.path.exists(local_csv_path):
-            print(f"ERROR: File not found at {local_csv_path}")
+
+        print("--- Starting Local CSV Preprocessing ---")
+
+        source_path = Path(local_csv_path)
+        if not source_path.exists():
+            print(f"ERROR: File or directory not found at {source_path}")
             return
-            
-        # Create the output directory if it doesn't exist
+
+        if source_path.is_dir():
+            csv_files = sorted(p for p in source_path.glob("*.csv") if p.is_file())
+            if not csv_files:
+                print(f"ERROR: No CSV files found in directory {source_path}")
+                return
+            targets = csv_files
+        else:
+            if source_path.suffix.lower() != ".csv":
+                print(f"ERROR: Expected a .csv file, got {source_path.suffix} at {source_path}")
+                return
+            targets = [source_path]
+
         os.makedirs(self.out_path, exist_ok=True)
-        
-        # Call the processing function directly
-        self._process_single_file(local_csv_path, is_local_csv=True)
-        
-        print(f"--- Local CSV processing complete! ---")
+
+        for csv_path in targets:
+            self._process_single_file(str(csv_path), is_local_csv=True)
+
+        print("--- Local CSV processing complete! ---")
