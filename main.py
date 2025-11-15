@@ -1,6 +1,5 @@
 """Entry point for running preprocessing and model training/evaluation."""
 
-from datetime import date
 import torch
 
 from preprocessing import AISDataPreprocessor
@@ -11,10 +10,9 @@ from pipeline import DataManager, Trainer, Evaluator
 # --- 1. GLOBAL CONFIGURATION ---
 CONFIG = {
     # --- Step 1: Preprocessing ---
-    "PARQUET_ROOT": "data/ais_parquet_data",  # IMPORTANT: Change this path
-    "START_DATE": date(2025, 2, 20),
-    "END_DATE": date(2025, 2, 27),
-    "NUM_CORES": 7,  # Number of CPU cores for parallel processing
+    "DATA_FOLDER": "data",  # Folder containing your CSV files
+    "PARQUET_ROOT": "data/ais_parquet_data",  # Output location for processed data
+    "NUM_CORES": 4,  # Number of CPU cores for parallel processing
 
     # --- Step 2: Training Pipeline ---
     "DEVICE": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
@@ -30,8 +28,8 @@ CONFIG = {
     "DIM_FEEDFORWARD": 512,  # Hidden dim in feedforward network
 
     # Training Hyperparameters
-    "NUM_EPOCHS": 10,
-    "BATCH_SIZE": 32,
+    "NUM_EPOCHS": 3,
+    "BATCH_SIZE": 256,
     "LEARNING_RATE": 0.0001,
     "NUM_WORKERS": 4,   # For DataLoader
 }
@@ -40,16 +38,13 @@ CONFIG = {
 # --- 2. DEFINE THE STEPS ---
 
 def run_preprocessing(config: dict) -> None:
-    """Runs the data ingestion and preprocessing step."""
-    print("--- STEP 1: RUNNING PREPROCESSING ---")
+    """Runs the data ingestion and preprocessing step on local CSV files."""
+    print("--- STEP 1: RUNNING PREPROCESSING ON LOCAL CSV FILES ---")
     preprocessor = AISDataPreprocessor(
         out_path=config["PARQUET_ROOT"],
         num_cores=config["NUM_CORES"],
     )
-    preprocessor.process_date_range_parallel(
-        start_date=config["START_DATE"],
-        end_date=config["END_DATE"],
-    )
+    preprocessor.process_local_csv(config["DATA_FOLDER"])
     print("--- STEP 1: PREPROCESSING COMPLETE ---")
 
 
@@ -69,6 +64,7 @@ def run_training_pipeline(config: dict) -> None:
         future_len=config["FUTURE_LEN"],
         batch_size=config["BATCH_SIZE"],
         num_workers=config["NUM_WORKERS"],
+        stride=5,
     )
 
     # 2. Initialize Model
@@ -105,12 +101,12 @@ def run_training_pipeline(config: dict) -> None:
 if __name__ == "__main__":
     # ---
     # TO RUN:
-    # 1. Make sure PARQUET_ROOT is set correctly.
+    # 1. Place your CSV files in the 'data' folder.
     # 2. Uncomment 'run_preprocessing(CONFIG)' and run the file.
     # 3. Once complete, comment 'run_preprocessing(CONFIG)' again.
     # 4. Uncomment 'run_training_pipeline(CONFIG)' and run the file.
     # ---
 
-    # run_preprocessing(CONFIG)
+    #run_preprocessing(CONFIG)  # Run this first to process CSV files
 
-    run_training_pipeline(CONFIG)
+    run_training_pipeline(CONFIG)  # Run this after preprocessing is done

@@ -6,6 +6,7 @@ from functools import partial
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+from pathlib import Path
 
 class AISDataPreprocessor:
     """

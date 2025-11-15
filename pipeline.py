@@ -14,6 +14,7 @@ import torch.nn as nn
 from haversine import Unit, haversine
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 
 # --- Helper utilities -------------------------------------------------------------------------
@@ -112,11 +113,12 @@ class DataManager:
         future_len: int,
         batch_size: int,
         num_workers: int = 4,
+        stride: int = 5
     ) -> Tuple[DataLoader, DataLoader, List[str]]:
         """Create PyTorch DataLoaders and return them alongside the test file list."""
 
-        train_dataset = VesselTrajectoryDataset(self.train_files, history_len, future_len)
-        val_dataset = VesselTrajectoryDataset(self.val_files, history_len, future_len)
+        train_dataset = VesselTrajectoryDataset(self.train_files, history_len, future_len, stride=stride)
+        val_dataset = VesselTrajectoryDataset(self.val_files, history_len, future_len, stride=stride)
 
         train_loader = DataLoader(
             train_dataset,
@@ -134,40 +136,47 @@ class DataManager:
 
 
 class VesselTrajectoryDataset(Dataset):
-    """Windowed trajectory dataset that produces (history, target) tensors."""
-
-    def __init__(self, segment_files: Sequence[str], history_len: int, future_len: int) -> None:
+    def __init__(self, segment_files: Sequence[str], history_len: int, future_len: int, stride: int = 5) -> None:
         self.segment_files = list(segment_files)
         self.history_len = history_len
         self.future_len = future_len
         self.window_len = history_len + future_len
+        self.stride = stride
 
         self.features = ["Latitude", "Longitude", "SOG", "COG"]
         self.targets = ["Latitude", "Longitude", "SOG", "COG"]
 
         self.samples: List[Tuple[str, int]] = []
+        self._cache: dict[str, pd.DataFrame] = {}
         print(f"Preprocessing {len(self.segment_files)} segments for Dataset...")
         for file_path in self.segment_files:
             try:
                 num_rows = pq.read_metadata(file_path).num_rows
-            except Exception as exc:  # pragma: no cover - diagnostic path
+            except Exception as exc:
                 print(f"Warning: Could not read metadata for {file_path}: {exc}")
                 continue
 
             if num_rows < self.window_len:
                 continue
 
-            for start_idx in range(num_rows - self.window_len + 1):
+            for start_idx in range(0, num_rows - self.window_len + 1, self.stride):
                 self.samples.append((file_path, start_idx))
 
         print(f"Created {len(self.samples)} total windows.")
+
 
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         file_path, start_idx = self.samples[idx]
-        df = pd.read_parquet(file_path, columns=self.features)
+
+        # Lazy-load and cache the parquet for this file_path
+        if file_path not in self._cache:
+            # You only load each segment file once per Dataset lifetime
+            self._cache[file_path] = pd.read_parquet(file_path, columns=self.features)
+
+        df = self._cache[file_path]
         window_df = df.iloc[start_idx : start_idx + self.window_len]
 
         x = window_df[self.features].iloc[: self.history_len].values
@@ -183,7 +192,7 @@ class VesselTrajectoryDataset(Dataset):
 
 
 class Trainer:
-    """Handles the model training loop and loss tracking."""
+    """Handles the model training loop with checkpointing and live plotting."""
 
     def __init__(
         self,
@@ -192,6 +201,7 @@ class Trainer:
         val_loader: DataLoader,
         learning_rate: float,
         device: torch.device,
+        checkpoint_dir: str = "checkpoints",
     ) -> None:
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -200,15 +210,104 @@ class Trainer:
         self.criterion = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         self.history = {"train_loss": [], "val_loss": []}
+        self.checkpoint_dir = checkpoint_dir
+        self.best_val_loss = float('inf')
+        
+        # Create checkpoint directory
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        
+        # Print model statistics
+        self._print_model_stats()
+
+    def _print_model_stats(self) -> None:
+        """Print detailed model statistics."""
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        
+        print("\n" + "="*70)
+        print("MODEL STATISTICS")
+        print("="*70)
+        print(f"Total Parameters:      {total_params:,}")
+        print(f"Trainable Parameters:  {trainable_params:,}")
+        print(f"Model Size (MB):       {total_params * 4 / 1024 / 1024:.2f}")
+        print(f"Device:                {self.device}")
+        print(f"Optimizer:             Adam (lr={self.optimizer.param_groups[0]['lr']})")
+        print(f"Loss Function:         MSE")
+        print("="*70 + "\n")
+
+    def _save_checkpoint(self, epoch: int, val_loss: float, is_best: bool = False) -> None:
+        """Save model checkpoint."""
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'val_loss': val_loss,
+            'train_loss': self.history["train_loss"][-1],
+            'history': self.history,
+        }
+        
+        # Always save latest checkpoint
+        latest_path = os.path.join(self.checkpoint_dir, 'latest_checkpoint.pt')
+        torch.save(checkpoint, latest_path)
+        
+        # Save best checkpoint
+        if is_best:
+            best_path = os.path.join(self.checkpoint_dir, 'best_model.pt')
+            torch.save(checkpoint, best_path)
+            print(f"✓ New best model saved! (Val Loss: {val_loss:.6f})")
+
+    def _update_live_plot(self) -> None:
+        """Update and save the loss plot after each epoch."""
+        plt.figure(figsize=(12, 6))
+        
+        epochs = range(1, len(self.history["train_loss"]) + 1)
+        
+        plt.plot(epochs, self.history["train_loss"], 'b-o', label='Training Loss', linewidth=2, markersize=6)
+        plt.plot(epochs, self.history["val_loss"], 'r-s', label='Validation Loss', linewidth=2, markersize=6)
+        
+        # Mark the best validation loss
+        best_epoch = self.history["val_loss"].index(min(self.history["val_loss"])) + 1
+        best_val_loss = min(self.history["val_loss"])
+        plt.plot(best_epoch, best_val_loss, 'g*', markersize=20, 
+                label=f'Best (Epoch {best_epoch})', zorder=5)
+        
+        plt.title('Training and Validation Loss Over Epochs', fontsize=14, fontweight='bold')
+        plt.xlabel('Epoch', fontsize=12)
+        plt.ylabel('Loss (MSE)', fontsize=12)
+        plt.legend(fontsize=10)
+        plt.grid(True, alpha=0.3)
+        
+        # Add text with current stats
+        current_epoch = len(self.history["train_loss"])
+        stats_text = f"Current Epoch: {current_epoch}\n"
+        stats_text += f"Train Loss: {self.history['train_loss'][-1]:.6f}\n"
+        stats_text += f"Val Loss: {self.history['val_loss'][-1]:.6f}\n"
+        stats_text += f"Best Val Loss: {best_val_loss:.6f}"
+        
+        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
+                fontsize=9, verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        
+        plt.tight_layout()
+        plt.savefig("loss_plot.png", dpi=100)
+        plt.close()
 
     def train(self, num_epochs: int) -> nn.Module:
         """Run the optimisation loop for ``num_epochs`` and return the trained model."""
 
-        print("\n--- Starting Training ---")
+        print("\n" + "="*70)
+        print("STARTING TRAINING")
+        print("="*70)
+        print(f"Total Epochs: {num_epochs}")
+        print(f"Training Batches per Epoch: {len(self.train_loader)}")
+        print(f"Validation Batches per Epoch: {len(self.val_loader)}")
+        print("="*70 + "\n")
+        
         for epoch in range(num_epochs):
+            # --- Training Phase ---
             self.model.train()
             running_train_loss = 0.0
-            for x_batch, y_batch in self.train_loader:
+            for batch_idx, (x_batch, y_batch) in enumerate(self.train_loader):
                 x_batch = x_batch.to(self.device)
                 y_batch = y_batch.to(self.device)
 
@@ -224,6 +323,7 @@ class Trainer:
             epoch_train_loss = running_train_loss / max(1, len(self.train_loader))
             self.history["train_loss"].append(epoch_train_loss)
 
+            # --- Validation Phase ---
             self.model.eval()
             running_val_loss = 0.0
             with torch.no_grad():
@@ -237,27 +337,50 @@ class Trainer:
             epoch_val_loss = running_val_loss / max(1, len(self.val_loader))
             self.history["val_loss"].append(epoch_val_loss)
 
+            # --- Checkpointing ---
+            is_best = epoch_val_loss < self.best_val_loss
+            if is_best:
+                self.best_val_loss = epoch_val_loss
+            
+            self._save_checkpoint(epoch + 1, epoch_val_loss, is_best)
+            
+            # --- Live Plotting ---
+            self._update_live_plot()
+
+            # --- Print Progress ---
+            status = "🌟 NEW BEST!" if is_best else ""
             print(
-                f"Epoch {epoch + 1}/{num_epochs} | "
-                f"Train Loss: {epoch_train_loss:.6f} | Val Loss: {epoch_val_loss:.6f}"
+                f"Epoch [{epoch + 1:3d}/{num_epochs}] | "
+                f"Train Loss: {epoch_train_loss:.6f} | "
+                f"Val Loss: {epoch_val_loss:.6f} | "
+                f"Best Val: {self.best_val_loss:.6f} {status}"
             )
 
-        print("--- Training Complete ---")
+        print("\n" + "="*70)
+        print("TRAINING COMPLETE")
+        print("="*70)
+        print(f"Best Validation Loss: {self.best_val_loss:.6f}")
+        print(f"Final Training Loss:  {self.history['train_loss'][-1]:.6f}")
+        print(f"Final Validation Loss: {self.history['val_loss'][-1]:.6f}")
+        print(f"Best model saved to: {os.path.join(self.checkpoint_dir, 'best_model.pt')}")
+        print("="*70 + "\n")
+        
+        # Load best model before returning
+        self._load_best_model()
         return self.model
 
-    def plot_loss(self) -> None:
-        """Persist the loss curves to ``loss_plot.png``."""
+    def _load_best_model(self) -> None:
+        """Load the best model from checkpoint."""
+        best_path = os.path.join(self.checkpoint_dir, 'best_model.pt')
+        if os.path.exists(best_path):
+            checkpoint = torch.load(best_path, map_location=self.device)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            print(f"✓ Loaded best model from epoch {checkpoint['epoch']}")
 
-        plt.figure(figsize=(10, 5))
-        plt.plot(self.history["train_loss"], label="Training Loss")
-        plt.plot(self.history["val_loss"], label="Validation Loss")
-        plt.title("Training and Validation Loss Over Epochs")
-        plt.xlabel("Epoch")
-        plt.ylabel("Loss (MSE)")
-        plt.legend()
-        plt.grid(True)
-        plt.savefig("loss_plot.png")
-        print("Loss plot saved to loss_plot.png")
+    def plot_loss(self) -> None:
+        """Final loss plot (already done in real-time, but kept for compatibility)."""
+        self._update_live_plot()
+        print("Final loss plot saved to loss_plot.png")
 
 
 # --- Evaluation ---------------------------------------------------------------------
