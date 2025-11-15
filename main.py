@@ -12,7 +12,7 @@ CONFIG = {
     # --- Step 1: Preprocessing ---
     "DATA_FOLDER": "data",  # Folder containing your CSV files
     "PARQUET_ROOT": "data/ais_parquet_data",  # Output location for processed data
-    "NUM_CORES": 4,  # Number of CPU cores for parallel processing
+    "NUM_CORES": 7,  # Number of CPU cores for parallel processing
 
     # --- Step 2: Training Pipeline ---
     "DEVICE": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
@@ -28,8 +28,8 @@ CONFIG = {
     "DIM_FEEDFORWARD": 512,  # Hidden dim in feedforward network
 
     # Training Hyperparameters
-    "NUM_EPOCHS": 3,
-    "BATCH_SIZE": 256,
+    "NUM_EPOCHS": 8,
+    "BATCH_SIZE": 32,
     "LEARNING_RATE": 0.0001,
     "NUM_WORKERS": 4,   # For DataLoader
 }
@@ -59,20 +59,25 @@ def run_training_pipeline(config: dict) -> None:
         val_size=0.15,
     )
     data_manager.create_data_splits()
+
+    # get the loaders
     train_loader, val_loader, test_files = data_manager.get_dataloaders(
         history_len=config["HISTORY_LEN"],
         future_len=config["FUTURE_LEN"],
         batch_size=config["BATCH_SIZE"],
         num_workers=config["NUM_WORKERS"],
-        stride=5,
     )
+
+    # use train_loader to get normalization stats
+    norm_stats = (train_loader.dataset.mean, train_loader.dataset.std)
 
     # 2. Initialize Model
     model = VesselTransformer(
         input_features=4,  # Lat, Lon, SOG, COG
         d_model=config["D_MODEL"],
         nhead=config["NHEAD"],
-        num_layers=config["NUM_LAYERS"],
+        num_encoder_layers=config["NUM_LAYERS"],
+        num_decoder_layers=config["NUM_LAYERS"],
         dim_feedforward=config["DIM_FEEDFORWARD"],
     )
 
@@ -83,17 +88,23 @@ def run_training_pipeline(config: dict) -> None:
         val_loader=val_loader,
         learning_rate=config["LEARNING_RATE"],
         device=config["DEVICE"],
+        normalization_stats=norm_stats,
     )
 
     trained_model = trainer.train(config["NUM_EPOCHS"])
     trainer.plot_loss()  # Saves loss_plot.png
 
     # 4. Evaluate Model
-    evaluator = Evaluator(trained_model, device=config["DEVICE"])
+    evaluator = Evaluator(
+        trained_model,
+        device=config["DEVICE"],
+        normalization_stats=norm_stats,
+    )
     evaluator.evaluate_and_plot(test_files, history_len=config["HISTORY_LEN"])
 
     print("--- STEP 2: TRAINING PIPELINE COMPLETE ---")
     print("Check 'loss_plot.png' and 'prediction_map.html' for results.")
+
 
 
 # --- 3. RUN THE PROJECT ---
