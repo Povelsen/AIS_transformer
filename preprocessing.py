@@ -1,10 +1,11 @@
-import pandas
-import pyarrow
-import pyarrow.parquet
-from datetime import date, timedelta
-from functools import partial
 import multiprocessing
 import os
+from datetime import timedelta
+from functools import partial
+
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 class AISDataPreprocessor:
     """
@@ -13,7 +14,8 @@ class AISDataPreprocessor:
     """
     def __init__(self, out_path, num_cores=None):
         self.out_path = out_path
-        self.num_cores = num_cores if num_cores else multiprocessing.cpu_count() - 1
+        default_cores = max(1, multiprocessing.cpu_count() - 1)
+        self.num_cores = num_cores if num_cores else default_cores
         
         # Bounding Box for Denmark
         self.bbox = [60, 0, 50, 20] # North, West, South, East
@@ -21,7 +23,7 @@ class AISDataPreprocessor:
         # Data types for efficient loading
         self.dtypes = {
             "MMSI": "object",
-            "SOG": float,      # <-- ***FIX: Added a missing comma here***
+            "SOG": float,
             "COG": float,
             "Longitude": float,
             "Latitude": float,
@@ -38,13 +40,11 @@ class AISDataPreprocessor:
             dates.append(day.strftime('%Y-%m-%d'))
         return dates
 
-    # --- MODIFIED: Added 'is_local_csv=False' argument ---
     def _process_single_file(self, file_url, is_local_csv=False):
         """
         The core logic to process one day's worth of AIS data.
         Can be run in parallel by the pool or standalone.
         """
-        # --- MODIFIED: Updated print statement ---
         if is_local_csv:
             print(f"[Processor]: Starting local file {file_url}")
         else:
@@ -53,12 +53,10 @@ class AISDataPreprocessor:
         usecols = list(self.dtypes.keys())
         
         try:
-            # --- MODIFIED: Handle local CSV or zipped URL ---
             if is_local_csv:
-                df = pandas.read_csv(file_url, usecols=usecols, dtype=self.dtypes)
+                df = pd.read_csv(file_url, usecols=usecols, dtype=self.dtypes)
             else:
-                df = pandas.read_csv(file_url, usecols=usecols, dtype=self.dtypes, compression='zip')
-            # --- END MODIFICATION ---
+                df = pd.read_csv(file_url, usecols=usecols, dtype=self.dtypes, compression='zip')
 
         except Exception as e:
             print(f"ERROR: Could not process {file_url}. Reason: {e}")
@@ -75,7 +73,7 @@ class AISDataPreprocessor:
         df = df[df["MMSI"].str[:3].astype(int).between(200, 775)]  # Adhere to MID standard
         
         df = df.rename(columns={"# Timestamp": "Timestamp"})
-        df["Timestamp"] = pandas.to_datetime(df["Timestamp"], format="%d/%m/%Y %H:%M:%S", errors="coerce")
+        df["Timestamp"] = pd.to_datetime(df["Timestamp"], format="%d/%m/%Y %H:%M:%S", errors="coerce")
 
         df = df.drop_duplicates(["Timestamp", "MMSI"], keep="first")
         df = df.dropna(subset=["Timestamp", "SOG", "COG", "Latitude", "Longitude"])
@@ -108,8 +106,8 @@ class AISDataPreprocessor:
         df["SOG"] = knots_to_ms * df["SOG"]
 
         # 7. Save to Parquet
-        table = pyarrow.Table.from_pandas(df, preserve_index=False)
-        pyarrow.parquet.write_to_dataset(
+        table = pa.Table.from_pandas(df, preserve_index=False)
+        pq.write_to_dataset(
             table,
             root_path=self.out_path,
             partition_cols=["MMSI", "Segment"],
