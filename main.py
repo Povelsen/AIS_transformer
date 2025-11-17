@@ -10,8 +10,8 @@ from pipeline import DataManager, Trainer, Evaluator
 # --- 1. GLOBAL CONFIGURATION ---
 CONFIG = {
     # --- Step 1: Preprocessing ---
-    "DATA_FOLDER": "data",  # Folder containing your CSV files
-    "PARQUET_ROOT": "data/ais_parquet_data",  # Output location for processed data
+    "DATA_FOLDER": "test_data",  # Folder containing your CSV files
+    "PARQUET_ROOT": "test_data/ais_parquet_data",  # Output location for processed data
     "NUM_CORES": 7,  # Number of CPU cores for parallel processing
 
     # --- Step 2: Training Pipeline ---

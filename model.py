@@ -60,6 +60,7 @@ class VesselTransformer(nn.Module):
         # Positional encodings
         self.pos_encoder = PositionalEncoding(d_model, dropout)
         self.pos_decoder = PositionalEncoding(d_model, dropout)
+        #self.positional_encoding = PositionalEncoding(d_model, dropout)
 
         # Transformer Encoder-Decoder
         self.transformer = nn.Transformer(
