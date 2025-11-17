@@ -109,9 +109,10 @@ def fn(file_path, out_path):
 if __name__ == "__main__":
     dates = ["2025-02-12", "2025-02-13", "2025-02-14", "2025-02-15", "2025-02-16", "2025-02-17", "2025-02-18"]
     for date in dates:
-        input_file = "data_raw_csv/aisdk-" / date / ".csv"
+        input_file = f"data_raw_csv/aisdk-{date}.csv"
         output_dir = f"data_cleaned_parquet/{date}_processed"
         fn(input_file, output_dir)
+
 
 
 
