@@ -107,9 +107,11 @@ def fn(file_path, out_path):
 
 
 if __name__ == "__main__":
-    date = "2025-03-01"
-    input_file = "aisdk-2025-03-01.csv"     # path to your AIS file
-    output_dir = f"/home/freja/DeepLearning/{date}_processed.parquet"    # output folder
-    fn(input_file, output_dir)
+    dates = ["2025-02-12", "2025-02-13", "2025-02-14", "2025-02-15", "2025-02-16", "2025-02-17", "2025-02-18"]
+    for date in dates:
+        input_file = "data_raw_csv/aisdk-" / date / ".csv"
+        output_dir = f"data_cleaned_parquet/{date}_processed"
+        fn(input_file, output_dir)
+
 
 
