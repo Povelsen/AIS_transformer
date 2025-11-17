@@ -184,34 +184,44 @@ class VesselTransformer(nn.Module):
 
 
 # Backward compatibility: keep old name but use encoder-decoder
-class VesselTransformerEncoderOnly(nn.Module):
+class VesselTransformerEncoderOnly(VesselTransformer):
     """
-    Old encoder-only architecture (kept for backward compatibility).
-    
-    For new projects, use VesselTransformer (encoder-decoder) instead.
+    Backward-compatible wrapper that now reuses the encoder-decoder ``VesselTransformer``.
+
+    Older code instantiating ``VesselTransformerEncoderOnly`` will still receive a full
+    seq2seq model, but it must now provide both ``src`` (history) and ``tgt`` (decoder input)
+    when calling ``forward``. This keeps the API surface aligned with the modern model while
+    avoiding two divergent implementations.
     """
 
-    def __init__(self, input_features, d_model, nhead, num_layers, dim_feedforward, dropout=0.1):
-        super().__init__()
-        self.d_model = d_model
-
-        self.input_embed = nn.Linear(input_features, d_model)
-        self.pos_encoder = PositionalEncoding(d_model, dropout)
-
-        encoder_layer = nn.TransformerEncoderLayer(
+    def __init__(
+        self,
+        input_features: int,
+        d_model: int,
+        nhead: int,
+        num_layers: int,
+        dim_feedforward: int,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__(
+            input_features=input_features,
             d_model=d_model,
             nhead=nhead,
+            num_encoder_layers=num_layers,
+            num_decoder_layers=num_layers,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
-            batch_first=True,
         )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-        self.output_head = nn.Linear(d_model, input_features)
-
-    def forward(self, src):
-        src_embed = self.input_embed(src) * math.sqrt(self.d_model)
-        src_pos = self.pos_encoder(src_embed)
-        output = self.transformer_encoder(src_pos)
-        prediction = self.output_head(output)
-        return prediction
+    def forward(
+        self,
+        src: torch.Tensor,
+        tgt: Optional[torch.Tensor] = None,
+        tgt_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if tgt is None:
+            raise ValueError(
+                "VesselTransformerEncoderOnly now uses the encoder-decoder architecture. "
+                "Pass both 'src' (history) and 'tgt' (decoder input) just like VesselTransformer."
+            )
+        return super().forward(src, tgt, tgt_mask)

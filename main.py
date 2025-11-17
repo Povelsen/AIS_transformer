@@ -15,7 +15,7 @@ CONFIG = {
     "NUM_CORES": 7,  # Number of CPU cores for parallel processing
 
     # --- Step 2: Training Pipeline ---
-    "DEVICE": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+    "DEVICE": torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")),
 
     # Data params
     "HISTORY_LEN": 60,  # Use 60 points (~1 hr) to predict the 61st
@@ -28,7 +28,7 @@ CONFIG = {
     "DIM_FEEDFORWARD": 512,  # Hidden dim in feedforward network
 
     # Training Hyperparameters
-    "NUM_EPOCHS": 8,
+    "NUM_EPOCHS": 1,
     "BATCH_SIZE": 32,
     "LEARNING_RATE": 0.0001,
     "NUM_WORKERS": 4,   # For DataLoader
