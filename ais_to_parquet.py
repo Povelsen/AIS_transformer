@@ -101,7 +101,7 @@ def fn(file_path, out_path):
         pyarrow.parquet.write_to_dataset(
             table,
             root_path=out_path,
-            partition_cols=["Ship type", "MMSI", "Segment"]
+            partition_cols=["MMSI", "Segment"]
         )
         print(f"Saved Parquet dataset to {out_path}")
 
@@ -111,4 +111,5 @@ if __name__ == "__main__":
     input_file = "aisdk-2025-03-01.csv"     # path to your AIS file
     output_dir = f"/home/freja/DeepLearning/{date}_processed.parquet"    # output folder
     fn(input_file, output_dir)
+
 
