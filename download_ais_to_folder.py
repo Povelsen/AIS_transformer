@@ -7,7 +7,7 @@ year = input("Enter the year (e.g., 2025): ")
 month = input("Enter the month (e.g., 02): ")
 start_day = int(input("Enter the start day (e.g., 12): "))
 end_day = int(input("Enter the end day (e.g., 18): "))
-target_folder = "/Users/mathiaspovelsen/Library/CloudStorage/OneDrive-DanmarksTekniskeUniversitet/DTU/Kandidat/02456 - Deep Learning/GitHub/AIS_transformer/test_data"
+target_folder = "/Users/mathiaspovelsen/Library/CloudStorage/OneDrive-DanmarksTekniskeUniversitet/DTU/Kandidat/02456 - Deep Learning/AIS_Transformer_Gemini_and_Meta/raw_ais_data"
 
 # Create the target folder if it doesn't exist
 os.makedirs(target_folder, exist_ok=True)

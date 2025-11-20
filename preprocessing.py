@@ -3,6 +3,7 @@ import os
 from datetime import timedelta
 from functools import partial
 
+import config
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -30,6 +31,7 @@ class AISDataPreprocessor:
             "Latitude": float,
             "# Timestamp": "object",
             "Type of mobile": "object",
+            "Ship type": "object",        # <- we need this column for filtering
         }
         
     def _get_date_range(self, start_date, end_date):
@@ -68,6 +70,16 @@ class AISDataPreprocessor:
         df = df[(df["Latitude"] <= north) & (df["Latitude"] >= south) & 
                 (df["Longitude"] >= west) & (df["Longitude"] <= east)]
 
+        # 1b. Filter by ship type: keep only Cargo ships       # <<< NEW
+        if "Ship type" in df.columns:
+            df["Ship type"] = df["Ship type"].fillna("").str.strip()
+            df = df[df["Ship type"].str.lower() == "cargo"]
+        else:
+            # If for some reason the column isn't present, drop everything
+            # so we don't accidentally mix in non-cargo traffic.
+            print(f"[Processor]: 'Ship type' column missing in {file_url}, skipping.")
+            return
+
         # 2. Clean and Validate
         df = df[df["Type of mobile"].isin(["Class A", "Class B"])].drop(columns=["Type of mobile"])
         df = df[df["MMSI"].str.len() == 9]  # Adhere to MMSI format
@@ -99,7 +111,7 @@ class AISDataPreprocessor:
         df = df.reset_index(drop=True)
 
         if df.empty:
-            print(f"[Processor]: No valid segments found in {file_url}")
+            print(f"[Processor]: No valid cargo segments found in {file_url}")
             return
 
         # 6. Final Conversion
@@ -118,31 +130,6 @@ class AISDataPreprocessor:
             print(f"[Processor]: Finished local file {file_url}")
         else:
             print(f"[Processor]: Finished URL {file_url}")
-
-    def process_date_range_parallel(self, start_date, end_date):
-        """
-        Public method to download and process all AIS data for a given
-        date range using a multiprocessing pool.
-        """
-        date_strings = self._get_date_range(start_date, end_date)
-        
-        base_url = "http://aisdata.ais.dk/aisdk-"
-        file_urls = [f"{base_url}{d}.zip" for d in date_strings]
-
-        print(f"--- Starting AIS Preprocessing ---")
-        print(f"Found {len(file_urls)} days to process.")
-        print(f"Using {self.num_cores} CPU cores.")
-        print(f"Outputting all data to: {self.out_path}")
-
-        # Create the output directory if it doesn't exist
-        os.makedirs(self.out_path, exist_ok=True)
-
-        # Create a processing pool
-        process_day_func = partial(self._process_single_file, is_local_csv=False)
-        with multiprocessing.Pool(processes=self.num_cores) as pool:
-            pool.map(process_day_func, file_urls)
-
-        print("--- All preprocessing jobs complete! ---")
 
     def process_local_csv(self, local_csv_path):
         """Public method to process one or more local CSV files.
